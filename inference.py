@@ -28,6 +28,7 @@ MAX_HEIGHT = 720
 MAX_WIDTH = 1280
 MAX_NUM_FRAMES = 257
 
+
 def load_vae(vae_dir, device):
     vae_ckpt_path = vae_dir / "vae_diffusion_pytorch_model.safetensors"
     vae_config_path = vae_dir / "config.json"
@@ -86,7 +87,6 @@ def load_image_to_tensor_with_resize_and_crop(
 def calculate_padding(
     source_height: int, source_width: int, target_height: int, target_width: int
 ) -> tuple[int, int, int, int]:
-
     # Calculate total padding needed
     pad_height = target_height - source_height
     pad_width = target_width - source_width
@@ -258,7 +258,9 @@ def main():
 
     device = args.device
     if device == "cuda" and not torch.cuda.is_available():
-        logger.warning("cuda is not available. Falling back to cpu. Use --device to specify device.")
+        logger.warning(
+            "Device 'cuda' is not available. Falling back to 'cpu'. Use --device to specify device."
+        )
         device = "cpu"
 
     output_dir = (
