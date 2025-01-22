@@ -63,7 +63,6 @@ def load_image_to_tensor_with_resize_and_crop(
 def calculate_padding(
     source_height: int, source_width: int, target_height: int, target_width: int
 ) -> tuple[int, int, int, int]:
-
     # Calculate total padding needed
     pad_height = target_height - source_height
     pad_width = target_width - source_width
@@ -238,6 +237,13 @@ def main():
         help="Sets the precision for the transformer and tokenizer. Default is bfloat16. If 'mixed_precision' is enabled, it moves to mixed-precision.",
     )
 
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device used for inference",
+    )
+
     # VAE noise augmentation
     parser.add_argument(
         "--decode_timestep",
@@ -324,22 +330,21 @@ def main():
         media_items = None
 
     ckpt_path = Path(args.ckpt_path)
-    vae = CausalVideoAutoencoder.from_pretrained(ckpt_path)
-    transformer = Transformer3DModel.from_pretrained(ckpt_path)
+    vae = CausalVideoAutoencoder.from_pretrained(ckpt_path, device_map=args.device)
+    transformer = Transformer3DModel.from_pretrained(ckpt_path, device_map=args.device)
     scheduler = RectifiedFlowScheduler.from_pretrained(ckpt_path)
 
     text_encoder = T5EncoderModel.from_pretrained(
-        "PixArt-alpha/PixArt-XL-2-1024-MS", subfolder="text_encoder"
+        "PixArt-alpha/PixArt-XL-2-1024-MS",
+        subfolder="text_encoder",
+        device_map=args.device,
     )
     patchifier = SymmetricPatchifier(patch_size=1)
     tokenizer = T5Tokenizer.from_pretrained(
-        "PixArt-alpha/PixArt-XL-2-1024-MS", subfolder="tokenizer"
+        "PixArt-alpha/PixArt-XL-2-1024-MS",
+        subfolder="tokenizer",
+        device_map=args.device,
     )
-
-    if torch.cuda.is_available():
-        transformer = transformer.cuda()
-        vae = vae.cuda()
-        text_encoder = text_encoder.cuda()
 
     vae = vae.to(torch.bfloat16)
     if args.precision == "bfloat16" and transformer.dtype != torch.bfloat16:
@@ -365,8 +370,7 @@ def main():
     }
 
     pipeline = LTXVideoPipeline(**submodel_dict)
-    if torch.cuda.is_available():
-        pipeline = pipeline.to("cuda")
+    pipeline = pipeline.to(args.device)
 
     # Prepare input for the pipeline
     sample = {
@@ -377,9 +381,7 @@ def main():
         "media_items": media_items,
     }
 
-    generator = torch.Generator(
-        device="cuda" if torch.cuda.is_available() else "cpu"
-    ).manual_seed(args.seed)
+    generator = torch.Generator(device=args.device).manual_seed(args.seed)
 
     images = pipeline(
         num_inference_steps=args.num_inference_steps,
