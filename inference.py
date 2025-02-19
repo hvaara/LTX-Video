@@ -10,6 +10,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
+import accelerate
+from accelerate import Accelerator
 from transformers import T5EncoderModel, T5Tokenizer
 
 from ltx_video.models.autoencoders.causal_video_autoencoder import (
@@ -240,7 +242,7 @@ def main():
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda" if torch.cuda.is_available() else "cpu",
+        default="auto",
         help="Device used for inference",
     )
 
@@ -330,20 +332,20 @@ def main():
         media_items = None
 
     ckpt_path = Path(args.ckpt_path)
-    vae = CausalVideoAutoencoder.from_pretrained(ckpt_path, device_map=args.device)
-    transformer = Transformer3DModel.from_pretrained(ckpt_path, device_map=args.device)
+    vae = CausalVideoAutoencoder.from_pretrained(ckpt_path)
+    transformer = Transformer3DModel.from_pretrained(ckpt_path, device_map="auto")
+    print(f"{accelerate.infer_auto_device_map(transformer)=}")
+    print(f"{transformer.device=}")
     scheduler = RectifiedFlowScheduler.from_pretrained(ckpt_path)
 
     text_encoder = T5EncoderModel.from_pretrained(
         "PixArt-alpha/PixArt-XL-2-1024-MS",
         subfolder="text_encoder",
-        device_map=args.device,
     )
     patchifier = SymmetricPatchifier(patch_size=1)
     tokenizer = T5Tokenizer.from_pretrained(
         "PixArt-alpha/PixArt-XL-2-1024-MS",
         subfolder="tokenizer",
-        device_map=args.device,
     )
 
     vae = vae.to(torch.bfloat16)
@@ -359,6 +361,18 @@ def main():
         else SkipLayerStrategy.Residual
     )
 
+    if args.device == "auto":
+        accelerator = Accelerator()
+        transformer, text_encoder, tokenizer, scheduler, vae = accelerator.prepare(transformer, text_encoder, tokenizer, scheduler, vae)
+    else:
+        transformer.to(args.device)
+        text_encoder.to(args.device)
+        # tokenizer.to(args.device)
+        # scheduler.to(args.device)
+        vae.to(args.device)
+    print(f"{patchifier=}")
+    print(f"{transformer.device=}")
+
     # Use submodels for the pipeline
     submodel_dict = {
         "transformer": transformer,
@@ -370,7 +384,7 @@ def main():
     }
 
     pipeline = LTXVideoPipeline(**submodel_dict)
-    pipeline = pipeline.to(args.device)
+    # pipeline = pipeline.to(args.device)
 
     # Prepare input for the pipeline
     sample = {
@@ -381,7 +395,8 @@ def main():
         "media_items": media_items,
     }
 
-    generator = torch.Generator(device=args.device).manual_seed(args.seed)
+    print(f"{transformer.device=}")
+    generator = torch.Generator(device=transformer.device).manual_seed(args.seed)
 
     images = pipeline(
         num_inference_steps=args.num_inference_steps,
